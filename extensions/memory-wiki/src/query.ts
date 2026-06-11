@@ -20,7 +20,7 @@ import {
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { OpenClawConfig } from "../api.js";
 import { assessClaimFreshness, isClaimContestedStatus } from "./claim-health.js";
-import type { ResolvedMemoryWikiConfig, WikiSearchBackend, WikiSearchCorpus } from "./config.js";
+import type { ResolvedMemoryWikiConfig, WikiPageGroup, WikiSearchBackend, WikiSearchCorpus } from "./config.js";
 import {
   parseWikiMarkdown,
   toWikiPageSummary,
@@ -240,31 +240,37 @@ function mergeWikiSearchCorpusResults(params: {
   return sortWikiSearchResults(selected).slice(0, params.maxResults);
 }
 
-async function listWikiMarkdownFiles(rootDir: string): Promise<string[]> {
+async function listWikiMarkdownFiles(rootDir: string, pageGroupDirs?: string[]): Promise<string[]> {
+  const dirs = pageGroupDirs && pageGroupDirs.length > 0 ? pageGroupDirs : [...QUERY_DIRS];
   const files = (
     await Promise.all(
-      QUERY_DIRS.map(async (relativeDir) => {
+      dirs.map(async (relativeDir) => {
         const dirPath = path.join(rootDir, relativeDir);
-        const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+        const entries = await fs.readdir(dirPath, { withFileTypes: true, recursive: true }).catch(() => []);
         return entries
           .filter(
             (entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md",
           )
-          .map((entry) => path.join(relativeDir, entry.name));
+          .map((entry) => path.relative(rootDir, path.join(entry.parentPath, entry.name)));
       }),
     )
   ).flat();
   return files.toSorted((left, right) => left.localeCompare(right));
 }
 
-export async function readQueryableWikiPages(rootDir: string): Promise<QueryableWikiPage[]> {
-  const files = await listWikiMarkdownFiles(rootDir);
-  return readQueryableWikiPagesByPaths(rootDir, files);
+export async function readQueryableWikiPages(
+  rootDir: string,
+  config?: { pageGroups: WikiPageGroup[] },
+): Promise<QueryableWikiPage[]> {
+  const pageGroupDirs = config?.pageGroups?.map((g) => g.dir) ?? [];
+  const files = await listWikiMarkdownFiles(rootDir, pageGroupDirs);
+  return readQueryableWikiPagesByPaths(rootDir, files, config?.pageGroups);
 }
 
 async function readQueryableWikiPagesByPaths(
   rootDir: string,
   files: string[],
+  _pageGroups?: WikiPageGroup[],
 ): Promise<QueryableWikiPage[]> {
   const pages = await Promise.all(
     files.map(async (relativePath) => {
@@ -1549,12 +1555,12 @@ export async function getMemoryWikiPage(params: {
     const digestClaimPagePath = digest ? resolveDigestClaimLookup(digest, params.lookup) : null;
     const digestLookupPage = digestClaimPagePath
       ? ((
-          await readQueryableWikiPagesByPaths(effectiveConfig.vault.path, [digestClaimPagePath])
+          await readQueryableWikiPagesByPaths(effectiveConfig.vault.path, [digestClaimPagePath], effectiveConfig.pageGroups)
         )[0] ?? null)
       : null;
     const pages = digestLookupPage
       ? [digestLookupPage]
-      : await readQueryableWikiPages(effectiveConfig.vault.path);
+      : await readQueryableWikiPages(effectiveConfig.vault.path, { pageGroups: effectiveConfig.pageGroups });
     const page = digestLookupPage ?? resolveQueryableWikiPageByLookup(pages, params.lookup);
     if (page) {
       const parsed = parseWikiMarkdown(page.raw);

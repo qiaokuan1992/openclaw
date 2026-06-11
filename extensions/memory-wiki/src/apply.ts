@@ -215,7 +215,7 @@ async function resolveWritablePage(params: {
   config: ResolvedMemoryWikiConfig;
   lookup: string;
 }): Promise<QueryableWikiPage | null> {
-  const pages = await readQueryableWikiPages(params.config.vault.path);
+  const pages = await readQueryableWikiPages(params.config.vault.path, { pageGroups: params.config.pageGroups });
   return resolveQueryableWikiPageByLookup(pages, params.lookup);
 }
 

@@ -44,6 +44,16 @@ import {
 } from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
+function deriveAllPageGroups(
+  config: ResolvedMemoryWikiConfig,
+): Array<{ kind: WikiPageKind; dir: string; heading: string }> {
+  return config.pageGroups.map((g) => ({
+    kind: g.kind,
+    dir: g.dir,
+    heading: g.heading ?? g.dir.charAt(0).toUpperCase() + g.dir.slice(1),
+  }));
+}
+
 const COMPILE_PAGE_GROUPS: Array<{ kind: WikiPageKind; dir: string; heading: string }> = [
   { kind: "source", dir: "sources", heading: "Sources" },
   { kind: "entity", dir: "entities", heading: "Entities" },
@@ -351,10 +361,10 @@ export type RefreshMemoryWikiIndexesResult = {
 
 async function collectMarkdownFiles(rootDir: string, relativeDir: string): Promise<string[]> {
   const dirPath = path.join(rootDir, relativeDir);
-  const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  const entries = await fs.readdir(dirPath, { withFileTypes: true, recursive: true }).catch(() => []);
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-    .map((entry) => path.join(relativeDir, entry.name))
+    .map((entry) => path.relative(rootDir, path.join(entry.parentPath, entry.name)))
     .filter((relativePath) => path.basename(relativePath) !== "index.md")
     .toSorted((left, right) => left.localeCompare(right));
 }
@@ -1027,12 +1037,17 @@ function buildRootIndexBody(params: {
     `- Reports: ${params.counts.report}`,
   ];
 
-  for (const group of COMPILE_PAGE_GROUPS) {
+  for (const group of deriveAllPageGroups(params.config)) {
+    const isRootDir = group.dir === ".";
     lines.push("", `### ${group.heading}`);
     lines.push(
       renderSectionList({
         config: params.config,
-        pages: params.pages.filter((page) => page.kind === group.kind),
+        pages: params.pages.filter((page) => {
+          if (page.kind !== group.kind) { return false; }
+          if (isRootDir) { return !page.relativePath.includes("/"); }
+          return page.relativePath === group.dir || page.relativePath.startsWith(group.dir + "/");
+        }),
         emptyText: `No ${normalizeLowercaseStringOrEmpty(group.heading)} yet.`,
       }),
     );
@@ -1046,9 +1061,14 @@ function buildDirectoryIndexBody(params: {
   pages: WikiPageSummary[];
   group: { kind: WikiPageKind; dir: string; heading: string };
 }): string {
+  const isRootDir = params.group.dir === ".";
   return renderSectionList({
     config: params.config,
-    pages: params.pages.filter((page) => page.kind === params.group.kind),
+    pages: params.pages.filter((page) => {
+      if (page.kind !== params.group.kind) { return false; }
+      if (isRootDir) { return !page.relativePath.includes("/"); }
+      return page.relativePath === params.group.dir || page.relativePath.startsWith(params.group.dir + "/");
+    }),
     emptyText: `No ${normalizeLowercaseStringOrEmpty(params.group.heading)} yet.`,
     sourceRelativeTo: `${params.group.dir}/index.md`,
   });

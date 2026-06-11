@@ -9,7 +9,8 @@ import {
 import { timestampMsToIsoString } from "openclaw/plugin-sdk/number-runtime";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { compileMemoryWikiVault } from "./compile.js";
-import type { ResolvedMemoryWikiConfig } from "./config.js";
+import type { ResolvedMemoryWikiConfig, WikiPageGroup } from "./config.js";
+import { getDefaultDirForKind } from "./config.js";
 import {
   countMemoryWikiImportRunStateRows,
   MEMORY_WIKI_IMPORT_RUN_STATE_MAX_ENTRIES,
@@ -27,6 +28,7 @@ import {
 } from "./markdown.js";
 import { resolveMemoryWikiTimestamp } from "./time.js";
 import { initializeMemoryWikiVault } from "./vault.js";
+// ChatGptImportRunEntry is defined upstream in import-runs-state.js
 
 const CHATGPT_PREFERENCE_SIGNAL_RE =
   /\b(prefer|prefers|preference|want|wants|need|needs|avoid|avoids|hate|hates|love|loves|default to|should default to|always use|don't want|does not want|likes|dislikes)\b/i;
@@ -437,7 +439,11 @@ function buildTranscript(messages: ChatGptMessage[]): string {
     .trim();
 }
 
-function resolveConversationPagePath(record: { conversationId: string; createdAt?: string }): {
+function resolveConversationPagePath(record: {
+    conversationId: string;
+    createdAt?: string;
+    pageGroups?: WikiPageGroup[];
+  }): {
   pageId: string;
   pagePath: string;
 } {
@@ -448,7 +454,7 @@ function resolveConversationPagePath(record: { conversationId: string; createdAt
   return {
     pageId,
     pagePath: path
-      .join("sources", `chatgpt-${datePrefix}-${conversationSlug || shortId}.md`)
+      .join(getDefaultDirForKind(record.pageGroups ?? [], "source"), `chatgpt-${datePrefix}-${conversationSlug || shortId}.md`)
       .replace(/\\/g, "/"),
   };
 }
@@ -456,6 +462,7 @@ function resolveConversationPagePath(record: { conversationId: string; createdAt
 function toConversationRecord(
   conversation: Record<string, unknown>,
   sourcePath: string,
+  pageGroups?: WikiPageGroup[],
 ): ChatGptConversationRecord | null {
   const conversationId =
     typeof conversation.conversation_id === "string" ? conversation.conversation_id.trim() : "";
@@ -475,6 +482,7 @@ function toConversationRecord(
   const { pageId, pagePath } = resolveConversationPagePath({
     conversationId,
     createdAt: isoFromUnix(conversation.create_time),
+    pageGroups,
   });
   return {
     conversationId,
@@ -717,7 +725,7 @@ export async function importChatGptConversations(params: {
     params.exportPath,
   );
   const records = conversations
-    .map((conversation) => toConversationRecord(conversation, conversationsPath))
+    .map((conversation) => toConversationRecord(conversation, conversationsPath, params.config.pageGroups))
     .filter((entry): entry is ChatGptConversationRecord => entry !== null)
     .toSorted((left, right) => left.pagePath.localeCompare(right.pagePath));
 
